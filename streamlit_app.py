@@ -28,15 +28,13 @@ EARLY_TOP = 15
 # Auto-refresh seconds
 REFRESH_SEC = 60
 
-# ===== ALERTS (configure in Streamlit Cloud -> App -> Settings -> Secrets) =====
-# Expected secrets.toml structure:
+# ===== ALERTS (set in Streamlit Cloud → Settings → Secrets) =====
 # [smtp]
 # host = "smtp.gmail.com"
 # port = 465
 # user = "your_gmail@gmail.com"
 # pass = "your_16_char_app_password"
 # to = ["youremail@example.com", "1234567890@vtext.com"]
-
 def send_alert(new_symbols):
     try:
         smtp = st.secrets["smtp"]
@@ -45,28 +43,25 @@ def send_alert(new_symbols):
         user = smtp["user"]
         pwd  = smtp["pass"]
         to   = list(smtp["to"])
-    except Exception as e:
-        st.info("Alerts are disabled (missing [smtp] secrets).")
+    except Exception:
+        # No secrets configured → silently skip alerts
         return
-
     if not new_symbols:
         return
-
-    body = "New Early Candidates ({}):\n\n".format(datetime.now().strftime("%Y-%m-%d %H:%M"))
-    body += "\n".join(new_symbols)
-
+    body = "New Early Candidates ({}):\n\n{}".format(
+        datetime.now().strftime("%Y-%m-%d %H:%M"), "\n".join(new_symbols)
+    )
     msg = MIMEText(body)
     msg["Subject"] = "Coinbase Early Risers Alert {}".format(datetime.now().strftime("%H:%M"))
     msg["From"] = user
     msg["To"] = ", ".join(to)
-
     try:
         with smtplib.SMTP_SSL(host, port, context=ssl.create_default_context()) as server:
             server.login(user, pwd)
             server.sendmail(user, to, msg.as_string())
-        st.toast("📨 Alert sent: {}".format(', '.join(new_symbols)), icon="✉️")
+        st.toast("📨 Alert sent: {}".format(", ".join(new_symbols)), icon="✉️")
     except Exception as e:
-        st.warning("Alert error: {}".format(e))
+        st.warning(f"Alert error: {e}")
 
 # ===== DEPENDENCIES =====
 try:
@@ -77,15 +72,20 @@ except ImportError:
 
 # ===== HELPERS =====
 def pct(curr, prev):
-    try: return (curr - prev) / prev * 100.0
-    except: return float("nan")
+    try:
+        return (curr - prev) / prev * 100.0
+    except Exception:
+        return float("nan")
 
 def fetch_ohlcv_safe(ex, symbol, limit=200):
-    try: return ex.fetch_ohlcv(symbol, timeframe="1m", limit=limit) or []
-    except: return []
+    try:
+        return ex.fetch_ohlcv(symbol, timeframe="1m", limit=limit) or []
+    except Exception:
+        return []
 
 def too_old(candles, max_age_min=6):
-    if not candles: return True
+    if not candles:
+        return True
     last_ts = candles[-1][0]
     age_min = (datetime.now(timezone.utc).timestamp()*1000 - last_ts)/60000
     return age_min > max_age_min
@@ -98,7 +98,6 @@ def scan():
 
     skip_tickers = {"USDT", "USD", "USD1", "USDC"}
     skip_symbols = {"USDT/USD", "USD1/USD"}
-
     symbols = []
     for m in ex.markets.values():
         if not m.get("active", True): continue
@@ -115,19 +114,21 @@ def scan():
     for sym in symbols:
         ohlcv = fetch_ohlcv_safe(ex, sym, limit=200)
         time.sleep(rl)
-        if too_old(ohlcv): continue
-        if len(ohlcv) < 60: continue
+        if too_old(ohlcv) or len(ohlcv) < 60:
+            continue
 
         closes = [c[4] for c in ohlcv]
         vols   = [c[5] for c in ohlcv]
         highs  = [c[2] for c in ohlcv]
 
         try:
-            t = ex.fetch_ticker(sym); last_close = float(t.get("last") or t.get("close"))
-        except:
+            t = ex.fetch_ticker(sym)
+            last_close = float(t.get("last") or t.get("close"))
+        except Exception:
             last_close = float(closes[-1])
 
-        if last_close < MIN_PRICE or last_close > MAX_PRICE: continue
+        if last_close < MIN_PRICE or last_close > MAX_PRICE:
+            continue
 
         vol_med = max(1e-9, float(median(vols)))
         def last_n(n):
@@ -184,9 +185,8 @@ if "seen_early" not in st.session_state:
 
 if early:
     st.subheader("Early Watchlist (pre-breakout)")
-    st.dataframe(early, width="stretch")
+    st.dataframe(early, use_container_width=True)
     current_syms = [row["Symbol"] for row in early]
-    # Send alerts for unseen symbols
     unseen = [s for s in current_syms if s not in st.session_state["seen_early"]]
     if unseen:
         send_alert(unseen)
@@ -196,7 +196,7 @@ else:
 
 if finals:
     st.subheader("Clean Risers (final checks)")
-    st.dataframe(finals, width="stretch")
+    st.dataframe(finals, use_container_width=True)
 else:
     st.warning("No clean risers right now.")
 
